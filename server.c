@@ -70,6 +70,98 @@ int register_user(const char *username, const char *encrypted_password) {
     return 1;
 }
 
+// Обновить имя пользователя в файле
+int update_username(const char *old_username, const char *new_username) {
+    FILE *file = fopen(USERS_FILE, "r");
+    if (!file) return 0;
+    
+    // Временный файл
+    FILE *temp = fopen("users_temp.txt", "w");
+    if (!temp) {
+        fclose(file);
+        return 0;
+    }
+    
+    char line[512];
+    int updated = 0;
+    
+    while (fgets(line, sizeof(line), file)) {
+        char stored_user[50];
+        char stored_hex[256];
+        sscanf(line, "%[^:]:%s", stored_user, stored_hex);
+        
+        if (strcmp(stored_user, old_username) == 0) {
+            // Сохраняем с новым именем, пароль оставляем тот же
+            fprintf(temp, "%s:%s\n", new_username, stored_hex);
+            updated = 1;
+        } else {
+            // Копируем остальных пользователей без изменений
+            fprintf(temp, "%s", line);
+        }
+    }
+    
+    fclose(file);
+    fclose(temp);
+    
+    if (updated) {
+        // Заменяем старый файл новым
+        remove(USERS_FILE);
+        rename("users_temp.txt", USERS_FILE);
+        return 1;
+    } else {
+        remove("users_temp.txt");
+        return 0;
+    }
+}
+
+// Обновить пароль пользователя в файле
+int update_password(const char *username, const char *new_encrypted_password) {
+    FILE *file = fopen(USERS_FILE, "r");
+    if (!file) return 0;
+    
+    // Временный файл
+    FILE *temp = fopen("users_temp.txt", "w");
+    if (!temp) {
+        fclose(file);
+        return 0;
+    }
+    
+    char line[512];
+    int updated = 0;
+    
+    while (fgets(line, sizeof(line), file)) {
+        char stored_user[50];
+        char stored_hex[256];
+        sscanf(line, "%[^:]:%s", stored_user, stored_hex);
+        
+        if (strcmp(stored_user, username) == 0) {
+            // Сохраняем с новым паролем
+            fprintf(temp, "%s:", username);
+            for(int i = 0; i < strlen(new_encrypted_password); i++) {
+                fprintf(temp, "%02X", (unsigned char)new_encrypted_password[i]);
+            }
+            fprintf(temp, "\n");
+            updated = 1;
+        } else {
+            // Копируем остальных пользователей без изменений
+            fprintf(temp, "%s", line);
+        }
+    }
+    
+    fclose(file);
+    fclose(temp);
+    
+    if (updated) {
+        // Заменяем старый файл новым
+        remove(USERS_FILE);
+        rename("users_temp.txt", USERS_FILE);
+        return 1;
+    } else {
+        remove("users_temp.txt");
+        return 0;
+    }
+}
+
 // Функция для проверки логина (сравниваем зашифрованные пароли)
 int login_user(const char *username, const char *encrypted_password) {
     FILE *file = fopen(USERS_FILE, "r");
@@ -354,6 +446,84 @@ int main() {
                         close(clients[i].socket);
                         remove_client(clients[i].socket);
                     }
+                    
+                    else if (strncmp(buffer, "/changename ", 12) == 0 && client->authenticated) {
+                        char new_username[50];
+                        sscanf(buffer + 12, "%s", new_username);
+    
+                        if (strlen(new_username) < 2) {
+                            char msg[] = "<<< Имя должно быть не короче 2 символов >>>\n";
+                            send_to_client(clients[i].socket, msg);
+                        }
+                        else if (login_user(new_username, "")) {
+                            char msg[] = "<<< Пользователь с таким именем уже существует >>>\n";
+                            send_to_client(clients[i].socket, msg);
+                        }
+                        else {
+                            char old_username[50];
+                            strcpy(old_username, client->username);
+        
+                            if (update_username(old_username, new_username)) {
+                                snprintf(client->username, sizeof(client->username), "%s", new_username);
+            
+                                char msg[BUFFER_SIZE];
+                                snprintf(msg, sizeof(msg), "<<< Имя успешно изменено на %s! >>>\n", new_username);
+                                send_to_client(clients[i].socket, msg);
+            
+                                char notify[BUFFER_SIZE];
+                                snprintf(notify, sizeof(notify), "<<< %s сменил имя на %s >>>\n", 
+                                old_username, new_username);
+                                broadcast_message(notify, clients[i].socket);
+            
+                                printf("<<< %s сменил имя на %s >>>\n", old_username, new_username);
+                            } else {
+                                char msg[] = "<<< Ошибка при смене имени >>>\n";
+                                send_to_client(clients[i].socket, msg);
+                            }
+                        }
+                    }
+
+                    else if (strncmp(buffer, "/changepass ", 12) == 0 && client->authenticated) {
+                        char old_hex[256], new_hex[256];
+                        sscanf(buffer + 12, "%s %s", old_hex, new_hex);
+    
+                        // Конвертируем HEX из команды в зашифрованные байты
+                        char encrypted_old[256];
+                        int old_len = strlen(old_hex) / 2;
+                        for(int i = 0; i < old_len; i++) {
+                            sscanf(old_hex + i*2, "%2hhX", &encrypted_old[i]);
+                        }
+                        encrypted_old[old_len] = '\0';
+    
+                        char encrypted_new[256];
+                        int new_len = strlen(new_hex) / 2;
+                        for(int i = 0; i < new_len; i++) {
+                            sscanf(new_hex + i*2, "%2hhX", &encrypted_new[i]);
+                        }
+                        encrypted_new[new_len] = '\0';
+    
+                        // Проверяем, что новый пароль не пустой
+                        if (new_len < 1) {
+                            char msg[] = "<<< Пароль должен быть не короче 1 байта >>>\n";
+                            send_to_client(clients[i].socket, msg);
+                        }
+                        // Проверяем старый пароль
+                        else if (login_user(client->username, encrypted_old)) {
+                        // Обновляем пароль в файле
+                            if (update_password(client->username, encrypted_new)) {
+                                char msg[] = "<<< Пароль успешно изменен! >>>\n";
+                                send_to_client(clients[i].socket, msg);
+                                printf("<<< %s изменил пароль >>>\n", client->username);
+                            } else {
+                                char msg[] = "<<< Ошибка при смене пароля >>>\n";
+                                send_to_client(clients[i].socket, msg);
+                            }
+                        } else {
+                            char msg[] = "<<< Неверный старый пароль >>>\n";
+                            send_to_client(clients[i].socket, msg);
+                        }
+                    }
+                    
                     else if (client->authenticated) {
                         // Обычное сообщение - отправляем в зашифрованном виде
                         printf("%s: %s\n", client->username, buffer);

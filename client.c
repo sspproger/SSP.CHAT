@@ -120,7 +120,7 @@ void draw_status_bar() {
     get_timestamp(timestamp, sizeof(timestamp));
     
     if(authenticated && strlen(my_username) > 0) {
-        printf(DIM "[%s] " GREEN " %s" RESET "\n", timestamp, my_username);
+        printf(DIM "[%s] username: [%s]" RESET "\n", timestamp, my_username);
     } else {
         printf(DIM "[%s] " YELLOW "Введите команду логин и пароль" RESET "\n", timestamp);
     }
@@ -129,19 +129,19 @@ void draw_status_bar() {
 // Нарисовать меню команд
 void draw_commands_menu() {
     printf("\n" DIM);
-    printf("┌──────────────────────────────────────────────────────────────────────┐\n");
-    printf("│ " YELLOW "                       ДОСТУПНЫЕ КОМАНДЫ" DIM "                             │\n");
-    printf("├──────────────────────────────────────────────────────────────────────┤\n");
-    printf("│ " GREEN "/reg" DIM "      username password  - регистрация нового пользователя       │\n");
-    printf("│ " GREEN "/login" DIM "    username password  - вход в систему                        │\n");
-    printf("│ " GREEN "/exit" DIM "                        - выход из чата                         │\n");
+    printf("┌────────────────────────────────────────────────────────────────────┐\n");
+    printf("│ " WHITE "                       ДОСТУПНЫЕ КОМАНДЫ" DIM "                           │\n");
+    printf("├────────────────────────────────────────────────────────────────────┤\n");
+    printf("│ " WHITE "/reg" DIM "      username password  - регистрация нового пользователя     │\n");
+    printf("│ " WHITE "/login" DIM "    username password  - вход в систему                      │\n");
+    printf("│ " WHITE "/exit" DIM "                        - выход из чата                       │\n");
     if(authenticated) {
-        printf("│ " GREEN "/changename" DIM " new_name         - сменить имя пользователя              │\n");
-        printf("│ " GREEN "/changepass" DIM " old new          - сменить пароль                        │\n");
-        printf("│ " GREEN "/users" DIM "                       - список активных пользователей         │\n");
-        printf("│ " GREEN "/clear" DIM "                       - очистить экран                        │\n");
+        printf("│ " WHITE "/changename" DIM " new_name         - сменить имя пользователя            │\n");
+        printf("│ " WHITE "/changepass" DIM " old new          - сменить пароль                      │\n");
+        printf("│ " WHITE "/users" DIM "                       - список активных пользователей       │\n");
+        printf("│ " WHITE "/clear" DIM "                       - очистить экран                      │\n");
     }
-    printf("└──────────────────────────────────────────────────────────────────────┘\n");
+    printf("└────────────────────────────────────────────────────────────────────┘\n");
     printf(RESET);
 }
 
