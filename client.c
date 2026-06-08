@@ -1,0 +1,421 @@
+// компиляция: gcc client.c -o client -lpthread
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <pthread.h>
+#include <signal.h>
+#include <time.h>
+
+#define BUFFER_SIZE 1024
+#define PORT 8888
+#define DEFAULT_IP "127.0.0.1"
+#define ENCRYPTION_KEY 0xAA
+
+// ANSI цветовые коды
+#define RESET   "\033[0m"
+#define BLACK   "\033[30m"
+#define RED     "\033[31m"
+#define GREEN   "\033[32m"
+#define YELLOW  "\033[33m"
+#define BLUE    "\033[34m"
+#define MAGENTA "\033[35m"
+#define CYAN    "\033[36m"
+#define WHITE   "\033[37m"
+#define BOLD    "\033[1m"
+#define DIM     "\033[2m"
+#define ITALIC  "\033[3m"
+#define UNDERLINE "\033[4m"
+#define BLINK   "\033[5m"
+#define REVERSE "\033[7m"
+
+// Цвета фона
+#define BG_BLACK   "\033[40m"
+#define BG_RED     "\033[41m"
+#define BG_GREEN   "\033[42m"
+#define BG_YELLOW  "\033[43m"
+#define BG_BLUE    "\033[44m"
+#define BG_MAGENTA "\033[45m"
+#define BG_CYAN    "\033[46m"
+#define BG_WHITE   "\033[47m"
+
+// Очистка экрана и перемещение курсора
+#define CLEAR_SCREEN "\033[2J\033[H"
+#define HIDE_CURSOR  "\033[?25l"
+#define SHOW_CURSOR  "\033[?25h"
+#define SAVE_CURSOR  "\033[s"
+#define RESTORE_CURSOR "\033[u"
+
+int sock;
+volatile sig_atomic_t running = 1;
+int authenticated = 0;
+char my_username[50];
+
+// Функция сквозного шифрования
+void e2e_encrypt(char *data, int len) {
+    for(int i = 0; i < len; i++) {
+        data[i] ^= ENCRYPTION_KEY;
+    }
+}
+
+// Получить текущее время
+void get_timestamp(char *buffer, int size) {
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    snprintf(buffer, size, "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
+}
+
+// Нарисовать красивую рамку
+void draw_box(const char *title, int width) {
+    printf(CYAN BOLD);
+    printf("┌");
+    for(int i = 0; i < width - 2; i++) printf("─");
+    printf("┐\n");
+    
+    if(strlen(title) > 0) {
+        int padding = (width - 2 - strlen(title)) / 2;
+        printf("│");
+        for(int i = 0; i < padding; i++) printf(" ");
+        printf("%s", title);
+        for(int i = 0; i < width - 2 - padding - strlen(title); i++) printf(" ");
+        printf("│\n");
+        
+        printf("├");
+        for(int i = 0; i < width - 2; i++) printf("─");
+        printf("┤\n");
+    }
+    printf(RESET);
+}
+
+
+// Нарисовать заголовок (минимальный)
+void draw_header() {
+    printf(CLEAR_SCREEN);
+    printf(HIDE_CURSOR);
+    
+    printf(CYAN BOLD);
+    printf("╔════════════════════════════════════════════════════════════════════╗\n");
+    printf("║                                                                    ║\n");
+    printf("║" CYAN "     ███████╗███████╗██████╗     ██████╗██╗  ██╗ █████╗ ████████╗   " CYAN "║\n");
+    printf("║" CYAN "     ██╔════╝██╔════╝██╔══██╗   ██╔════╝██║  ██║██╔══██╗╚══██╔══╝   " CYAN "║\n");
+    printf("║" CYAN "     ███████╗███████╗██████╔╝   ██║     ███████║███████║   ██║      " CYAN "║\n");
+    printf("║" CYAN "     ╚════██║╚════██║██╔═══╝    ██║     ██╔══██║██╔══██║   ██║      " CYAN "║\n");
+    printf("║" CYAN "     ███████║███████║██║     ██╗╚██████╗██║  ██║██║  ██║   ██║      " CYAN "║\n");
+    printf("║" CYAN "     ╚══════╝╚══════╝╚═╝     ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝      " CYAN "║\n");
+    printf("║                                                                    ║\n");
+    printf("║" YELLOW BOLD "                         SSP.chat                               " CYAN "    ║\n");
+    printf("║                                                                    ║\n");
+    printf("╚════════════════════════════════════════════════════════════════════╝\n");
+    printf(RESET "\n");
+}
+
+// Нарисовать статус-бар (минимальный)
+void draw_status_bar() {
+    char timestamp[10];
+    get_timestamp(timestamp, sizeof(timestamp));
+    
+    if(authenticated && strlen(my_username) > 0) {
+        printf(DIM "[%s] " GREEN " %s" RESET "\n", timestamp, my_username);
+    } else {
+        printf(DIM "[%s] " YELLOW "Введите команду логин и пароль" RESET "\n", timestamp);
+    }
+}
+
+// Нарисовать меню команд
+void draw_commands_menu() {
+    printf("\n" DIM);
+    printf("┌──────────────────────────────────────────────────────────────────────┐\n");
+    printf("│ " YELLOW "                       ДОСТУПНЫЕ КОМАНДЫ" DIM "                             │\n");
+    printf("├──────────────────────────────────────────────────────────────────────┤\n");
+    printf("│ " GREEN "/reg" DIM "      username password  - регистрация нового пользователя       │\n");
+    printf("│ " GREEN "/login" DIM "    username password  - вход в систему                        │\n");
+    printf("│ " GREEN "/exit" DIM "                        - выход из чата                         │\n");
+    if(authenticated) {
+        printf("│ " GREEN "/changename" DIM " new_name         - сменить имя пользователя              │\n");
+        printf("│ " GREEN "/changepass" DIM " old new          - сменить пароль                        │\n");
+        printf("│ " GREEN "/users" DIM "                       - список активных пользователей         │\n");
+        printf("│ " GREEN "/clear" DIM "                       - очистить экран                        │\n");
+    }
+    printf("└──────────────────────────────────────────────────────────────────────┘\n");
+    printf(RESET);
+}
+
+// Обработчик Ctrl+C
+void handle_sigint(int sig) {
+    printf(SHOW_CURSOR);
+    printf("\n" RED "\n┌──────────────────────────────────────────────────────────────────────┐\n");
+    printf("│                       👋 ДО СВИДАНИЯ! 👋                                 │\n");
+    printf("└──────────────────────────────────────────────────────────────────────┘\n" RESET);
+    running = 0;
+    if(sock > 0) {
+        if(authenticated) {
+            send(sock, "/exit", 5, 0);
+        }
+        shutdown(sock, SHUT_RDWR);
+        close(sock);
+    }
+    exit(0);
+}
+
+// Форматирование и вывод сообщения
+void print_message(const char *msg) {
+    char buffer[BUFFER_SIZE];
+    strcpy(buffer, msg);
+    
+    // Убираем символ новой строки в конце
+    int len = strlen(buffer);
+    if(len > 0 && buffer[len-1] == '\n') {
+        buffer[len-1] = '\0';
+    }
+    
+    // Получаем текущее время для каждого сообщения
+    char time_buf[10];
+    get_timestamp(time_buf, sizeof(time_buf));
+    
+    // Проверяем успешный вход в систему
+    if(strstr(buffer, "Добро пожаловать")) {
+        authenticated = 1;
+        draw_header();
+        draw_status_bar();
+        draw_commands_menu();
+        printf(SHOW_CURSOR);
+        return;
+    }
+
+    // Если выход из системы
+    if(strstr(buffer, "До свидания")) {
+        authenticated = 0;
+        my_username[0] = '\0';
+        draw_header();
+        draw_status_bar();
+        draw_commands_menu();
+        printf(SHOW_CURSOR);
+        return;
+    }
+    
+    // Раскрашиваем разные типы сообщений
+    // 1. Присоединение к чату
+    if(strstr(buffer, "присоединился") || strstr(buffer, "присоединился к") || 
+       strstr(buffer, "joined") || strstr(buffer, "вошёл")) {
+        printf(DIM "[%s]" RESET " " YELLOW "➤ %s" RESET "\n", time_buf, buffer);
+    }
+    // 2. Покинул чат
+    else if(strstr(buffer, "покинул") || strstr(buffer, "left") || strstr(buffer, "вышел")) {
+        printf(DIM "[%s]" RESET " " YELLOW "➤ %s" RESET "\n", time_buf, buffer);
+    }
+    // 3. Успешная регистрация
+    else if(strstr(buffer, "Регистрация успешна")) {
+        printf(DIM "[%s]" RESET " " GREEN "✓ %s" RESET "\n", time_buf, buffer);
+    }
+    // 4. Успешный вход (системное сообщение)
+    else if(strstr(buffer, "Добро пожаловать")) {
+        printf(DIM "[%s]" RESET " " GREEN "✓ %s" RESET "\n", time_buf, buffer);
+    }
+    // 5. Ошибки
+    else if(strstr(buffer, "Неверное") || strstr(buffer, "существует") || 
+            strstr(buffer, "Ошибка") || strstr(buffer, "ошибка") ||
+            strstr(buffer, "переполнен")) {
+        printf(DIM "[%s]" RESET " " RED "✗ %s" RESET "\n", time_buf, buffer);
+    }
+    // 6. Сообщения пользователей (содержат двоеточие)
+    else if(strstr(buffer, ":")) {
+        char *colon = strstr(buffer, ":");
+        if(colon) {
+            int username_len = colon - buffer;
+            char username[50];
+            strncpy(username, buffer, username_len);
+            username[username_len] = '\0';
+            
+            // Убираем возможные "<<< " в начале (если сервер их шлёт)
+            char *clean_buffer = buffer;
+            if(strstr(buffer, "<<< ") == buffer) {
+                clean_buffer = buffer + 4;
+                colon = strstr(clean_buffer, ":");
+                if(colon) {
+                    username_len = colon - clean_buffer;
+                    strncpy(username, clean_buffer, username_len);
+                    username[username_len] = '\0';
+                }
+            }
+            
+            if(authenticated && strcmp(username, my_username) == 0) {
+                // Своё сообщение — зелёное имя
+                printf(DIM "[%s]" RESET " " GREEN BOLD "%s" RESET ":" WHITE "%s" RESET "\n", 
+                       time_buf, username, colon + 1);
+            } else {
+                // Чужое сообщение — синее имя
+                printf(DIM "[%s]" RESET " " CYAN BOLD "%s" RESET ":" WHITE "%s" RESET "\n", 
+                       time_buf, username, colon + 1);
+            }
+        } else {
+            printf(DIM "[%s]" RESET " %s\n", time_buf, buffer);
+        }
+    }
+    // 7. Всё остальное
+    else {
+        // Убираем <<< и >>> если есть
+        char *clean_buffer = buffer;
+        if(strstr(buffer, "<<< ") == buffer) {
+            clean_buffer = buffer + 4;
+        }
+        char *end = strstr(clean_buffer, " >>>");
+        if(end) {
+            *end = '\0';
+        }
+        printf(DIM "[%s]" RESET " %s\n", time_buf, clean_buffer);
+    }
+}
+
+void *receive_messages(void *arg){
+    char buffer[BUFFER_SIZE];
+    int bytes;
+
+    while(running){
+        bytes = recv(sock, buffer, BUFFER_SIZE - 1, 0);
+        if(bytes <= 0){
+            if(running) {
+                printf("\n" RED "<<< Соединение с сервером потеряно. >>>\n" RESET);
+            }
+            break;
+        }
+        buffer[bytes] = '\0';
+        e2e_encrypt(buffer, bytes);
+
+        // Очищаем строку ввода и выводим сообщение
+        printf("\r\033[K");
+        print_message(buffer);
+        
+        printf(SHOW_CURSOR);
+
+        // Выводим приглашение
+        if(authenticated) {
+            printf(CYAN "[" GREEN "%s" CYAN "] " RESET, my_username);
+        } else {
+            printf(GREEN "[Вход]>>> " RESET);
+        }
+        fflush(stdout);
+    }
+    return NULL;
+}
+
+int main(int argc, char *argv[]){
+    struct sockaddr_in server_addr;
+    pthread_t receive_thread;
+    char buffer[BUFFER_SIZE];
+    char *server_ip;
+    
+    signal(SIGINT, handle_sigint);
+
+    if(argc > 1){
+        server_ip = argv[1];
+    } else {
+        server_ip = DEFAULT_IP;
+    }
+
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0){
+        perror("<<< Ошибка создания сокета! >>>");
+        exit(1);
+    }
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = inet_addr(server_ip);
+
+    draw_header();
+    
+    printf(BLUE "<<< Подключение к " CYAN "%s" BLUE ":%d... >>>\n" RESET, server_ip, PORT);
+
+    if(connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0){
+        printf(RED "<<< Ошибка подключения к серверу! >>>\n" RESET);
+        printf(YELLOW "<<< Убедитесь, что сервер запущен на %s:%d >>>\n" RESET, server_ip, PORT);
+        exit(1);
+    }
+
+    printf(GREEN "<<< Подключение установлено! >>>\n" RESET);
+    
+    draw_status_bar();
+    draw_commands_menu();
+    
+    printf(SHOW_CURSOR);
+    printf(GREEN "\n[Вход]>>> " RESET);
+    fflush(stdout);
+
+    pthread_create(&receive_thread, NULL, receive_messages, NULL);
+
+    while(running){
+        if(fgets(buffer, BUFFER_SIZE, stdin) == NULL) {
+            break;
+        }
+
+        buffer[strcspn(buffer, "\n")] = '\0';
+        
+        // Обработка локальных команд (не отправляются на сервер)
+        if(strcmp(buffer, "/clear") == 0 && authenticated) {
+            draw_header();
+            draw_status_bar();
+            draw_commands_menu();
+            printf(SHOW_CURSOR);
+            continue;
+        }
+        
+        if(strcmp(buffer, "/exit") == 0){
+            printf(YELLOW "\n<<< Выход из чата... >>>\n" RESET);
+            break;
+        }
+        
+        // Проверка на успешную авторизацию
+        if(strncmp(buffer, "/login ", 7) == 0) {
+            char username[50], password[50];
+            sscanf(buffer + 7, "%s %s", username, password);
+            strcpy(my_username, username);
+        }
+        
+        // Проверка на смену имени
+        if(strncmp(buffer, "/changename ", 12) == 0 && authenticated) {
+            char newname[50];
+            sscanf(buffer + 12, "%s", newname);
+            strcpy(my_username, newname);
+        }
+
+        if(strlen(buffer) > 0){
+            char encrypted[BUFFER_SIZE];
+            strcpy(encrypted, buffer);
+            e2e_encrypt(encrypted, strlen(buffer));
+            if(send(sock, encrypted, strlen(buffer), 0) < 0){
+                printf(RED "<<< Ошибка отправки >>>\n" RESET);
+                break;
+            }
+
+            // Выводим своё сообщение с временем
+            char time_buf[10];
+            get_timestamp(time_buf, sizeof(time_buf));
+            printf(DIM "[%s]" RESET " " GREEN BOLD "%s" RESET ":" WHITE "%s" RESET "\n", 
+                    time_buf, my_username, buffer);
+        }
+
+        printf(SHOW_CURSOR);
+
+        // Выводим приглашение для следующего ввода
+        if(authenticated) {
+            printf(CYAN "[" GREEN "%s" CYAN "] " RESET, my_username);
+        } else {
+            printf(GREEN "[Вход] " RESET);
+        }
+        fflush(stdout);
+    }
+
+    printf(SHOW_CURSOR);
+    shutdown(sock, SHUT_RDWR);
+    close(sock);
+    pthread_cancel(receive_thread);
+    pthread_join(receive_thread, NULL);
+    
+    printf(YELLOW "\n<<< До встречи в SSP.CHAT >>>\n" RESET);
+    return 0;
+}
