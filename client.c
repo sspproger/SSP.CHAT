@@ -162,6 +162,34 @@ void handle_sigint(int sig) {
     exit(0);
 }
 
+// Функция для преобразования байт в HEX строку
+void bytes_to_hex(const unsigned char *data, int len, char *hex) {
+    for(int i = 0; i < len; i++) {
+        sprintf(hex + i*2, "%02X", data[i]);
+    }
+    hex[len*2] = '\0';
+}
+
+// Функция для подготовки команды с паролем (шифрует пароль и конвертирует в HEX)
+void prepare_password_command(char *cmd, const char *command_prefix, 
+                               const char *param1, const char *param2) {
+    char encrypted1[256], encrypted2[256];
+    char hex1[512], hex2[512];
+    
+    // Шифруем пароли
+    strcpy(encrypted1, param1);
+    strcpy(encrypted2, param2);
+    e2e_encrypt(encrypted1, strlen(param1));
+    e2e_encrypt(encrypted2, strlen(param2));
+    
+    // Конвертируем в HEX
+    bytes_to_hex((unsigned char*)encrypted1, strlen(param1), hex1);
+    bytes_to_hex((unsigned char*)encrypted2, strlen(param2), hex2);
+    
+    // Формируем команду
+    sprintf(cmd, "%s %s %s", command_prefix, hex1, hex2);
+}
+
 // Форматирование и вывод сообщения
 void print_message(const char *msg) {
     char buffer[BUFFER_SIZE];
@@ -381,6 +409,57 @@ int main(int argc, char *argv[]){
             char newname[50];
             sscanf(buffer + 12, "%s", newname);
             strcpy(my_username, newname);
+        }
+
+        // Обработка регистрации
+        if(strncmp(buffer, "/reg ", 4) == 0) {
+            char username[50], password[50];
+            sscanf(buffer + 4, "%s %s", username, password);
+    
+            char encrypted_password[256];
+            strcpy(encrypted_password, password);
+            e2e_encrypt(encrypted_password, strlen(password));
+    
+            char hex_password[512];
+            bytes_to_hex((unsigned char*)encrypted_password, strlen(password), hex_password);
+    
+            // Переформируем команду
+            snprintf(buffer, BUFFER_SIZE, "/reg %s %s", username, hex_password);
+        }
+        // Обработка логина
+        else if(strncmp(buffer, "/login ", 7) == 0) {
+            char username[50], password[50];
+            sscanf(buffer + 7, "%s %s", username, password);
+    
+            char encrypted_password[256];
+            strcpy(encrypted_password, password);
+            e2e_encrypt(encrypted_password, strlen(password));
+    
+            char hex_password[512];
+            bytes_to_hex((unsigned char*)encrypted_password, strlen(password), hex_password);
+    
+            snprintf(buffer, BUFFER_SIZE, "/login %s %s", username, hex_password);
+        }
+        // Обработка смены пароля
+        else if(strncmp(buffer, "/changepass ", 12) == 0 && authenticated) {
+            char old_pass[100], new_pass[100];
+            sscanf(buffer + 12, "%s %s", old_pass, new_pass);
+    
+            char encrypted_old[256], encrypted_new[256];
+            char hex_old[512], hex_new[512];
+    
+            // Шифруем старый пароль
+            strcpy(encrypted_old, old_pass);
+            e2e_encrypt(encrypted_old, strlen(old_pass));
+            bytes_to_hex((unsigned char*)encrypted_old, strlen(old_pass), hex_old);
+    
+            // Шифруем новый пароль
+            strcpy(encrypted_new, new_pass);
+            e2e_encrypt(encrypted_new, strlen(new_pass));
+            bytes_to_hex((unsigned char*)encrypted_new, strlen(new_pass), hex_new);
+    
+            // Переформируем команду
+            snprintf(buffer, BUFFER_SIZE, "/changepass %s %s", hex_old, hex_new);
         }
 
         if(strlen(buffer) > 0){
