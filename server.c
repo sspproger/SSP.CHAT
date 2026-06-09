@@ -173,6 +173,26 @@ int update_username(const char *old_username, const char *new_username) {
     }
 }
 
+// Получить список активных пользователей
+void get_active_users(char *buffer, int size) {
+    buffer[0] = '\0';
+    int found = 0;
+    
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i].socket != 0 && clients[i].authenticated && strlen(clients[i].username) > 0) {
+            if (found) {
+                strncat(buffer, ", ", size - strlen(buffer) - 1);
+            }
+            strncat(buffer, clients[i].username, size - strlen(buffer) - 1);
+            found = 1;
+        }
+    }
+    
+    if (!found) {
+        snprintf(buffer, size, "Нет активных пользователей");
+    }
+}
+
 // Найти клиента по сокету
 Client* find_client(int socket) {
     for (int i = 0; i < MAX_CLIENTS; i++) {
@@ -471,6 +491,15 @@ int main() {
                             char msg[] = "<<< Неверный старый пароль >>>\n";
                             send_to_client(clients[i].socket, msg);
                         }
+                    }
+                    // Обработка запроса списка пользователей
+                    else if (strcmp(buffer, "/users") == 0 && client->authenticated) {
+                        char users_list[BUFFER_SIZE];
+                        get_active_users(users_list, sizeof(users_list));
+    
+                        char msg[BUFFER_SIZE];
+                        snprintf(msg, sizeof(msg), "<<< Активные пользователи: %s >>>\n", users_list);
+                        send_to_client(clients[i].socket, msg);
                     }
                     // Обычные сообщения
                     else if (client->authenticated) {

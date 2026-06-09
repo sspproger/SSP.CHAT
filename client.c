@@ -463,6 +463,17 @@ int main(int argc, char *argv[]){
         }
 
         if(strlen(buffer) > 0){
+            // Не выводим локально команды, которые обрабатываются на сервере
+            int is_system_command = 0;
+            if (strncmp(buffer, "/reg ", 4) == 0 ||
+                strncmp(buffer, "/login ", 7) == 0 ||
+                strncmp(buffer, "/changepass ", 12) == 0 ||
+                strcmp(buffer, "/users") == 0 ||
+                strcmp(buffer, "/changename") == 0 ||
+                strncmp(buffer, "/changename ", 12) == 0) {
+                is_system_command = 1;
+            }
+    
             char encrypted[BUFFER_SIZE];
             strcpy(encrypted, buffer);
             e2e_encrypt(encrypted, strlen(buffer));
@@ -471,11 +482,13 @@ int main(int argc, char *argv[]){
                 break;
             }
 
-            // Выводим своё сообщение с временем
-            char time_buf[10];
-            get_timestamp(time_buf, sizeof(time_buf));
-            printf(DIM "[%s]" RESET " " GREEN BOLD "%s" RESET ":" WHITE "%s" RESET "\n", 
-                    time_buf, my_username, buffer);
+            // Выводим своё сообщение с временем только для обычных сообщений
+            if (!is_system_command) {
+                char time_buf[10];
+                get_timestamp(time_buf, sizeof(time_buf));
+                printf(DIM "[%s]" RESET " " GREEN BOLD "%s" RESET ":" WHITE "%s" RESET "\n", 
+                        time_buf, my_username, buffer);
+            }
         }
 
         printf(SHOW_CURSOR);
