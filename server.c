@@ -218,9 +218,7 @@ void broadcast_message(const char *message, int sender_socket) {
     e2e_encrypt(encrypted, strlen(message));
     
     for (int i = 0; i < MAX_CLIENTS; i++) {
-        if (clients[i].socket != 0 && 
-            clients[i].socket != sender_socket &&
-            clients[i].authenticated) {
+        if (clients[i].socket != 0 && clients[i].authenticated) {
             send(clients[i].socket, encrypted, strlen(message), 0);
         }
     }

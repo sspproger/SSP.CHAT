@@ -1,4 +1,3 @@
-// компиляция: gcc client.c -o client -lpthread
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -272,9 +271,7 @@ void print_message(const char *msg) {
             }
             
             if(authenticated && strcmp(username, my_username) == 0) {
-                // Своё сообщение — зелёное имя
-                printf(DIM "[%s]" RESET " " GREEN BOLD "%s" RESET ":" WHITE "%s" RESET "\n", 
-                       time_buf, username, colon + 1);
+                return;
             } else {
                 // Чужое сообщение — синее имя
                 printf(DIM "[%s]" RESET " " CYAN BOLD "%s" RESET ":" WHITE "%s" RESET "\n", 
@@ -314,18 +311,9 @@ void *receive_messages(void *arg){
         buffer[bytes] = '\0';
         e2e_encrypt(buffer, bytes);
 
-        // Очищаем строку ввода и выводим сообщение
-        printf("\r\033[K");
+        // Просто выводим сообщение
         print_message(buffer);
         
-        printf(SHOW_CURSOR);
-
-        // Выводим приглашение
-        if(authenticated) {
-            printf(CYAN "[" GREEN "%s" CYAN "] " RESET, my_username);
-        } else {
-            printf(GREEN "[Вход]>>> " RESET);
-        }
         fflush(stdout);
     }
     return NULL;
@@ -371,12 +359,23 @@ int main(int argc, char *argv[]){
     draw_commands_menu();
     
     printf(SHOW_CURSOR);
-    printf(GREEN "\n[Вход]>>> " RESET);
+    //printf(GREEN "\n[Вход]>>> " RESET);
     fflush(stdout);
 
     pthread_create(&receive_thread, NULL, receive_messages, NULL);
 
     while(running){
+        // Получаем текущее время
+        char time_buf[10];
+        get_timestamp(time_buf, sizeof(time_buf));
+
+        if(authenticated) {
+            printf(DIM "[%s]" RESET " " CYAN "[" GREEN "%s" CYAN "] " RESET, time_buf, my_username);
+        } else {
+            printf(DIM "[%s]" RESET " " GREEN "[Вход]>>> " RESET, time_buf);
+        }
+        fflush(stdout);
+
         if(fgets(buffer, BUFFER_SIZE, stdin) == NULL) {
             break;
         }
@@ -463,17 +462,6 @@ int main(int argc, char *argv[]){
         }
 
         if(strlen(buffer) > 0){
-            // Не выводим локально команды, которые обрабатываются на сервере
-            int is_system_command = 0;
-            if (strncmp(buffer, "/reg ", 4) == 0 ||
-                strncmp(buffer, "/login ", 7) == 0 ||
-                strncmp(buffer, "/changepass ", 12) == 0 ||
-                strcmp(buffer, "/users") == 0 ||
-                strcmp(buffer, "/changename") == 0 ||
-                strncmp(buffer, "/changename ", 12) == 0) {
-                is_system_command = 1;
-            }
-    
             char encrypted[BUFFER_SIZE];
             strcpy(encrypted, buffer);
             e2e_encrypt(encrypted, strlen(buffer));
@@ -481,25 +469,7 @@ int main(int argc, char *argv[]){
                 printf(RED "<<< Ошибка отправки >>>\n" RESET);
                 break;
             }
-
-            // Выводим своё сообщение с временем только для обычных сообщений
-            if (!is_system_command) {
-                char time_buf[10];
-                get_timestamp(time_buf, sizeof(time_buf));
-                printf(DIM "[%s]" RESET " " GREEN BOLD "%s" RESET ":" WHITE "%s" RESET "\n", 
-                        time_buf, my_username, buffer);
-            }
         }
-
-        printf(SHOW_CURSOR);
-
-        // Выводим приглашение для следующего ввода
-        if(authenticated) {
-            printf(CYAN "[" GREEN "%s" CYAN "] " RESET, my_username);
-        } else {
-            printf(GREEN "[Вход] " RESET);
-        }
-        fflush(stdout);
     }
 
     printf(SHOW_CURSOR);
