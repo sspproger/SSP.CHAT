@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,32 +27,17 @@
 #define WHITE   "\033[37m"
 #define BOLD    "\033[1m"
 #define DIM     "\033[2m"
-#define ITALIC  "\033[3m"
-#define UNDERLINE "\033[4m"
-#define BLINK   "\033[5m"
-#define REVERSE "\033[7m"
-
-// Цвета фона
-#define BG_BLACK   "\033[40m"
-#define BG_RED     "\033[41m"
-#define BG_GREEN   "\033[42m"
-#define BG_YELLOW  "\033[43m"
-#define BG_BLUE    "\033[44m"
-#define BG_MAGENTA "\033[45m"
-#define BG_CYAN    "\033[46m"
-#define BG_WHITE   "\033[47m"
 
 // Очистка экрана и перемещение курсора
 #define CLEAR_SCREEN "\033[2J\033[H"
 #define HIDE_CURSOR  "\033[?25l"
 #define SHOW_CURSOR  "\033[?25h"
-#define SAVE_CURSOR  "\033[s"
-#define RESTORE_CURSOR "\033[u"
 
 int sock;
 volatile sig_atomic_t running = 1;
 int authenticated = 0;
 char my_username[50];
+int need_redraw_prompt = 0;  // Флаг для перерисовки приглашения
 
 // Функция сквозного шифрования
 void e2e_encrypt(char *data, int len) {
@@ -69,30 +53,7 @@ void get_timestamp(char *buffer, int size) {
     snprintf(buffer, size, "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
 }
 
-// Нарисовать красивую рамку
-void draw_box(const char *title, int width) {
-    printf(CYAN BOLD);
-    printf("┌");
-    for(int i = 0; i < width - 2; i++) printf("─");
-    printf("┐\n");
-    
-    if(strlen(title) > 0) {
-        int padding = (width - 2 - strlen(title)) / 2;
-        printf("│");
-        for(int i = 0; i < padding; i++) printf(" ");
-        printf("%s", title);
-        for(int i = 0; i < width - 2 - padding - strlen(title); i++) printf(" ");
-        printf("│\n");
-        
-        printf("├");
-        for(int i = 0; i < width - 2; i++) printf("─");
-        printf("┤\n");
-    }
-    printf(RESET);
-}
-
-
-// Нарисовать заголовок (минимальный)
+// Нарисовать заголовок
 void draw_header() {
     printf(CLEAR_SCREEN);
     printf(HIDE_CURSOR);
@@ -113,7 +74,7 @@ void draw_header() {
     printf(RESET "\n");
 }
 
-// Нарисовать статус-бар (минимальный)
+// Нарисовать статус-бар
 void draw_status_bar() {
     char timestamp[10];
     get_timestamp(timestamp, sizeof(timestamp));
@@ -144,49 +105,17 @@ void draw_commands_menu() {
     printf(RESET);
 }
 
-// Обработчик Ctrl+C
-void handle_sigint(int sig) {
-    printf(SHOW_CURSOR);
-    printf("\n" RED "\n┌──────────────────────────────────────────────────────────────────────┐\n");
-    printf("│                       👋 ДО СВИДАНИЯ! 👋                                 │\n");
-    printf("└──────────────────────────────────────────────────────────────────────┘\n" RESET);
-    running = 0;
-    if(sock > 0) {
-        if(authenticated) {
-            send(sock, "/exit", 5, 0);
-        }
-        shutdown(sock, SHUT_RDWR);
-        close(sock);
+// Вывести приглашение для ввода
+void print_prompt() {
+    char time_buf[10];
+    get_timestamp(time_buf, sizeof(time_buf));
+    
+    if(authenticated && strlen(my_username) > 0) {
+        printf(DIM "[%s]" RESET " " CYAN "[" GREEN "%s" CYAN "] " RESET, time_buf, my_username);
+    } else {
+        printf(DIM "[%s]" RESET " " GREEN "[Вход]>>> " RESET, time_buf);
     }
-    exit(0);
-}
-
-// Функция для преобразования байт в HEX строку
-void bytes_to_hex(const unsigned char *data, int len, char *hex) {
-    for(int i = 0; i < len; i++) {
-        sprintf(hex + i*2, "%02X", data[i]);
-    }
-    hex[len*2] = '\0';
-}
-
-// Функция для подготовки команды с паролем (шифрует пароль и конвертирует в HEX)
-void prepare_password_command(char *cmd, const char *command_prefix, 
-                               const char *param1, const char *param2) {
-    char encrypted1[256], encrypted2[256];
-    char hex1[512], hex2[512];
-    
-    // Шифруем пароли
-    strcpy(encrypted1, param1);
-    strcpy(encrypted2, param2);
-    e2e_encrypt(encrypted1, strlen(param1));
-    e2e_encrypt(encrypted2, strlen(param2));
-    
-    // Конвертируем в HEX
-    bytes_to_hex((unsigned char*)encrypted1, strlen(param1), hex1);
-    bytes_to_hex((unsigned char*)encrypted2, strlen(param2), hex2);
-    
-    // Формируем команду
-    sprintf(cmd, "%s %s %s", command_prefix, hex1, hex2);
+    fflush(stdout);
 }
 
 // Форматирование и вывод сообщения
@@ -196,11 +125,13 @@ void print_message(const char *msg) {
     
     // Убираем символ новой строки в конце
     int len = strlen(buffer);
-    if(len > 0 && buffer[len-1] == '\n') {
+    if(len > 0 && (buffer[len-1] == '\n' || buffer[len-1] == '\r')) {
         buffer[len-1] = '\0';
     }
+    if(len > 1 && buffer[len-2] == '\r') {
+        buffer[len-2] = '\0';
+    }
     
-    // Получаем текущее время для каждого сообщения
     char time_buf[10];
     get_timestamp(time_buf, sizeof(time_buf));
     
@@ -210,7 +141,7 @@ void print_message(const char *msg) {
         draw_header();
         draw_status_bar();
         draw_commands_menu();
-        printf(SHOW_CURSOR);
+        print_prompt();
         return;
     }
 
@@ -221,35 +152,28 @@ void print_message(const char *msg) {
         draw_header();
         draw_status_bar();
         draw_commands_menu();
-        printf(SHOW_CURSOR);
+        print_prompt();
         return;
     }
     
+    // Перед выводом сообщения нужно перейти на новую строку
+    // и очистить текущую строку с приглашением
+    printf("\r\033[K");  // Возврат в начало строки и очистка
+    
     // Раскрашиваем разные типы сообщений
-    // 1. Присоединение к чату
     if(strstr(buffer, "присоединился") || strstr(buffer, "присоединился к") || 
-       strstr(buffer, "joined") || strstr(buffer, "вошёл")) {
+       strstr(buffer, "joined") || strstr(buffer, "вошёл") ||
+       strstr(buffer, "покинул") || strstr(buffer, "left") || strstr(buffer, "вышел")) {
         printf(DIM "[%s]" RESET " " YELLOW "➤ %s" RESET "\n", time_buf, buffer);
     }
-    // 2. Покинул чат
-    else if(strstr(buffer, "покинул") || strstr(buffer, "left") || strstr(buffer, "вышел")) {
-        printf(DIM "[%s]" RESET " " YELLOW "➤ %s" RESET "\n", time_buf, buffer);
-    }
-    // 3. Успешная регистрация
     else if(strstr(buffer, "Регистрация успешна")) {
         printf(DIM "[%s]" RESET " " GREEN "✓ %s" RESET "\n", time_buf, buffer);
     }
-    // 4. Успешный вход (системное сообщение)
-    else if(strstr(buffer, "Добро пожаловать")) {
-        printf(DIM "[%s]" RESET " " GREEN "✓ %s" RESET "\n", time_buf, buffer);
-    }
-    // 5. Ошибки
     else if(strstr(buffer, "Неверное") || strstr(buffer, "существует") || 
             strstr(buffer, "Ошибка") || strstr(buffer, "ошибка") ||
             strstr(buffer, "переполнен")) {
         printf(DIM "[%s]" RESET " " RED "✗ %s" RESET "\n", time_buf, buffer);
     }
-    // 6. Сообщения пользователей (содержат двоеточие)
     else if(strstr(buffer, ":")) {
         char *colon = strstr(buffer, ":");
         if(colon) {
@@ -258,22 +182,12 @@ void print_message(const char *msg) {
             strncpy(username, buffer, username_len);
             username[username_len] = '\0';
             
-            // Убираем возможные "<<< " в начале (если сервер их шлёт)
-            char *clean_buffer = buffer;
-            if(strstr(buffer, "<<< ") == buffer) {
-                clean_buffer = buffer + 4;
-                colon = strstr(clean_buffer, ":");
-                if(colon) {
-                    username_len = colon - clean_buffer;
-                    strncpy(username, clean_buffer, username_len);
-                    username[username_len] = '\0';
-                }
-            }
-            
+            // Не выводим свои сообщения (они уже выведены при отправке)
             if(authenticated && strcmp(username, my_username) == 0) {
+                // Свои сообщения не выводим, просто перерисовываем приглашение
+                print_prompt();
                 return;
             } else {
-                // Чужое сообщение — синее имя
                 printf(DIM "[%s]" RESET " " CYAN BOLD "%s" RESET ":" WHITE "%s" RESET "\n", 
                        time_buf, username, colon + 1);
             }
@@ -281,7 +195,6 @@ void print_message(const char *msg) {
             printf(DIM "[%s]" RESET " %s\n", time_buf, buffer);
         }
     }
-    // 7. Всё остальное
     else {
         // Убираем <<< и >>> если есть
         char *clean_buffer = buffer;
@@ -294,6 +207,9 @@ void print_message(const char *msg) {
         }
         printf(DIM "[%s]" RESET " %s\n", time_buf, clean_buffer);
     }
+    
+    // После вывода сообщения снова показываем приглашение
+    print_prompt();
 }
 
 void *receive_messages(void *arg){
@@ -304,19 +220,41 @@ void *receive_messages(void *arg){
         bytes = recv(sock, buffer, BUFFER_SIZE - 1, 0);
         if(bytes <= 0){
             if(running) {
-                printf("\n" RED "<<< Соединение с сервером потеряно. >>>\n" RESET);
+                printf("\r\033[K" RED "<<< Соединение с сервером потеряно. >>>\n" RESET);
             }
             break;
         }
         buffer[bytes] = '\0';
         e2e_encrypt(buffer, bytes);
-
-        // Просто выводим сообщение
-        print_message(buffer);
         
-        fflush(stdout);
+        print_message(buffer);
     }
     return NULL;
+}
+
+// Функция для преобразования байт в HEX строку
+void bytes_to_hex(const unsigned char *data, int len, char *hex) {
+    for(int i = 0; i < len; i++) {
+        sprintf(hex + i*2, "%02X", data[i]);
+    }
+    hex[len*2] = '\0';
+}
+
+// Обработчик Ctrl+C
+void handle_sigint(int sig) {
+    printf(SHOW_CURSOR);
+    printf("\r\033[K\n" RED "\n┌──────────────────────────────────────────────────────────────────────┐\n");
+    printf("│                       👋 ДО СВИДАНИЯ! 👋                                 │\n");
+    printf("└──────────────────────────────────────────────────────────────────────┘\n" RESET);
+    running = 0;
+    if(sock > 0) {
+        if(authenticated) {
+            send(sock, "/exit", 5, 0);
+        }
+        shutdown(sock, SHUT_RDWR);
+        close(sock);
+    }
+    exit(0);
 }
 
 int main(int argc, char *argv[]){
@@ -359,50 +297,48 @@ int main(int argc, char *argv[]){
     draw_commands_menu();
     
     printf(SHOW_CURSOR);
-    //printf(GREEN "\n[Вход]>>> " RESET);
-    fflush(stdout);
-
+    
     pthread_create(&receive_thread, NULL, receive_messages, NULL);
 
     while(running){
-        // Получаем текущее время
-        char time_buf[10];
-        get_timestamp(time_buf, sizeof(time_buf));
-
-        if(authenticated) {
-            printf(DIM "[%s]" RESET " " CYAN "[" GREEN "%s" CYAN "] " RESET, time_buf, my_username);
-        } else {
-            printf(DIM "[%s]" RESET " " GREEN "[Вход]>>> " RESET, time_buf);
-        }
-        fflush(stdout);
+        print_prompt();
 
         if(fgets(buffer, BUFFER_SIZE, stdin) == NULL) {
             break;
         }
 
+        // Убираем символ новой строки
         buffer[strcspn(buffer, "\n")] = '\0';
-        
+    
+        // Если пустое сообщение - пропускаем
+        if(strlen(buffer) == 0) {
+            continue;
+        }
+    
         // Обработка локальных команд (не отправляются на сервер)
         if(strcmp(buffer, "/clear") == 0 && authenticated) {
             draw_header();
             draw_status_bar();
             draw_commands_menu();
-            printf(SHOW_CURSOR);
             continue;
         }
-        
+    
         if(strcmp(buffer, "/exit") == 0){
             printf(YELLOW "\n<<< Выход из чата... >>>\n" RESET);
             break;
         }
-        
+    
+        // Сохраняем оригинальное сообщение для вывода (до шифрования)
+        char original_msg[BUFFER_SIZE];
+        strcpy(original_msg, buffer);
+    
         // Проверка на успешную авторизацию
         if(strncmp(buffer, "/login ", 7) == 0) {
             char username[50], password[50];
             sscanf(buffer + 7, "%s %s", username, password);
             strcpy(my_username, username);
         }
-        
+    
         // Проверка на смену имени
         if(strncmp(buffer, "/changename ", 12) == 0 && authenticated) {
             char newname[50];
@@ -410,7 +346,7 @@ int main(int argc, char *argv[]){
             strcpy(my_username, newname);
         }
 
-        // Обработка регистрации
+        // Обработка команд с шифрованием
         if(strncmp(buffer, "/reg ", 4) == 0) {
             char username[50], password[50];
             sscanf(buffer + 4, "%s %s", username, password);
@@ -422,10 +358,8 @@ int main(int argc, char *argv[]){
             char hex_password[512];
             bytes_to_hex((unsigned char*)encrypted_password, strlen(password), hex_password);
     
-            // Переформируем команду
             snprintf(buffer, BUFFER_SIZE, "/reg %s %s", username, hex_password);
         }
-        // Обработка логина
         else if(strncmp(buffer, "/login ", 7) == 0) {
             char username[50], password[50];
             sscanf(buffer + 7, "%s %s", username, password);
@@ -439,7 +373,6 @@ int main(int argc, char *argv[]){
     
             snprintf(buffer, BUFFER_SIZE, "/login %s %s", username, hex_password);
         }
-        // Обработка смены пароля
         else if(strncmp(buffer, "/changepass ", 12) == 0 && authenticated) {
             char old_pass[100], new_pass[100];
             sscanf(buffer + 12, "%s %s", old_pass, new_pass);
@@ -447,20 +380,27 @@ int main(int argc, char *argv[]){
             char encrypted_old[256], encrypted_new[256];
             char hex_old[512], hex_new[512];
     
-            // Шифруем старый пароль
             strcpy(encrypted_old, old_pass);
             e2e_encrypt(encrypted_old, strlen(old_pass));
             bytes_to_hex((unsigned char*)encrypted_old, strlen(old_pass), hex_old);
     
-            // Шифруем новый пароль
             strcpy(encrypted_new, new_pass);
             e2e_encrypt(encrypted_new, strlen(new_pass));
             bytes_to_hex((unsigned char*)encrypted_new, strlen(new_pass), hex_new);
     
-            // Переформируем команду
             snprintf(buffer, BUFFER_SIZE, "/changepass %s %s", hex_old, hex_new);
         }
-
+    
+        // Вывод своего сообщения (только если это не служебная команда и пользователь авторизован)
+        if(authenticated && strncmp(original_msg, "/", 1) != 0) {
+            char time_buf2[10];
+            get_timestamp(time_buf2, sizeof(time_buf2));
+            // Стираем строку с приглашением и выводим свое сообщение
+            printf("\r\033[K");  // Очищаем текущую строку
+            printf(DIM "[%s]" RESET " " CYAN "[" GREEN "%s" CYAN "]" RESET " %s\n", 
+                   time_buf2, my_username, original_msg);
+        }
+    
         if(strlen(buffer) > 0){
             char encrypted[BUFFER_SIZE];
             strcpy(encrypted, buffer);
